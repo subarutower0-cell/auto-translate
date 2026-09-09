@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle
 } from 'discord.js';
+import { franc } from 'franc';
 import 'dotenv/config';
 
 const client = new Client({
@@ -37,33 +38,54 @@ function looksKorean(text) {
   return /[\uac00-\ud7a3]/.test(text);
 }
 
+// タイ文字が含まれていればタイ語とみなす簡易判定
+function looksThai(text) {
+  return /[\u0e00-\u0e7f]/.test(text);
+}
+
+// franc（ISO 639-3）の判定結果をMyMemory用の言語コードに変換
+const FRANC_TO_LANG = {
+  eng: 'en',
+  fra: 'fr',
+  spa: 'es',
+  deu: 'de',
+  vie: 'vi',
+  ind: 'id',
+  cmn: 'zh-CN'
+};
+
+// 文章から翻訳元の言語を推測する
+function detectSourceLang(text) {
+  if (looksJapanese(text)) return 'ja';
+  if (looksKorean(text)) return 'ko';
+  if (looksThai(text)) return 'th';
+
+  const francCode = franc(text); // 短い文章は 'und'（判定不能）になることがある
+  return FRANC_TO_LANG[francCode] ?? 'en'; // 判定できない場合は英語として扱う
+}
+
 // 翻訳先の自動決定: デフォルトは韓国語。ただし韓国語の入力なら日本語に変換する
-function decideTargetLang(text) {
-  if (looksKorean(text) && !looksJapanese(text)) return 'ja';
-  return 'ko';
+function decideTargetLang(sourceLang) {
+  return sourceLang === 'ko' ? 'ja' : 'ko';
 }
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Google翻訳の非公式エンドポイントを利用（APIキー不要・個人利用向け）
-// User-Agentを付与し、429(レート制限)時は少し待って自動リトライする
-async function translateText(text, targetLang, attempt = 1) {
-  const url =
-    'https://translate.googleapis.com/translate_a/single' +
-    `?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
-
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    }
+// MyMemory API（登録・クレジットカード不要の無料翻訳API）で翻訳する
+async function translateText(text, sourceLang, targetLang, attempt = 1) {
+  const params = new URLSearchParams({
+    q: text,
+    langpair: `${sourceLang}|${targetLang}`
   });
+  const url = `https://api.mymemory.translated.net/get?${params.toString()}`;
 
-  if (res.status === 429 && attempt < 4) {
-    await sleep(attempt * 1500); // 1.5秒, 3秒, 4.5秒と間隔を空けて再試行
-    return translateText(text, targetLang, attempt + 1);
+  const res = await fetch(url);
+
+  if ((res.status === 429 || res.status === 503) && attempt < 4) {
+    await sleep(attempt * 1500); // 混雑時は少し待って自動で再試行
+    return translateText(text, sourceLang, targetLang, attempt + 1);
   }
 
   if (!res.ok) {
@@ -71,17 +93,24 @@ async function translateText(text, targetLang, attempt = 1) {
   }
 
   const data = await res.json();
-  const translated = data[0].map(chunk => chunk[0]).join('');
-  const detectedLang = data[2];
 
-  return { translated, detectedLang };
+  if (data.responseStatus && Number(data.responseStatus) !== 200) {
+    throw new Error(`翻訳APIエラー: ${data.responseStatus} ${data.responseDetails ?? ''}`);
+  }
+
+  const translated = data.responseData?.translatedText;
+  if (!translated) {
+    throw new Error('翻訳APIエラー: レスポンスが不正です');
+  }
+
+  return translated;
 }
 
 function truncate(text, max) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   console.log(`ログインしました: ${client.user.tag}`);
 });
 
@@ -97,16 +126,18 @@ async function handleTranslateCommand(interaction) {
   const text = interaction.options.getString('text', true);
   const explicitTarget = interaction.options.getString('to');
 
-  const targetLang = explicitTarget ?? decideTargetLang(text);
+  const sourceLang = detectSourceLang(text);
+  const targetLang = explicitTarget ?? decideTargetLang(sourceLang);
 
   // 自分にしか見えない返信にする（プレビュー）
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
-    const { translated, detectedLang } = await translateText(text, targetLang);
+    const translated =
+      sourceLang === targetLang ? text : await translateText(text, sourceLang, targetLang);
 
     const previewContent =
-      `**原文** (${detectedLang}): ${truncate(text, MAX_REPLY_LENGTH / 2)}\n` +
+      `**原文** (${sourceLang}): ${truncate(text, MAX_REPLY_LENGTH / 2)}\n` +
       `**翻訳** (${targetLang}): ${truncate(translated, MAX_REPLY_LENGTH / 2)}`;
 
     const sentMessage = await interaction.editReply(previewContent);
@@ -127,7 +158,7 @@ async function handleTranslateCommand(interaction) {
     await interaction.editReply({ content: previewContent, components: [row] });
   } catch (error) {
     console.error('翻訳エラー:', error);
-    const isRateLimited = error.message.includes('429');
+    const isRateLimited = error.message.includes('429') || error.message.includes('503');
     await interaction.editReply(
       isRateLimited
         ? '翻訳サービスが混み合っています。少し時間をおいてもう一度試してください。'
