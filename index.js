@@ -18,6 +18,14 @@ process.on('unhandledRejection', reason => {
   console.error('Unhandled Rejection:', reason);
 });
 
+client.on('error', error => {
+  console.error('Discordクライアントエラー:', error);
+});
+
+client.on('shardError', error => {
+  console.error('シャードエラー:', error);
+});
+
 const MAX_REPLY_LENGTH = 1900; // Discordの2000文字制限に余裕を持たせる
 const PENDING_TTL_MS = 10 * 60 * 1000; // 送信ボタンの有効期限（10分）
 
@@ -120,10 +128,15 @@ client.once('clientReady', () => {
 });
 
 client.on('interactionCreate', async interaction => {
-  if (interaction.isChatInputCommand() && interaction.commandName === 'translate') {
-    await handleTranslateCommand(interaction);
-  } else if (interaction.isButton() && interaction.customId.startsWith('send:')) {
-    await handleSendButton(interaction);
+  try {
+    if (interaction.isChatInputCommand() && interaction.commandName === 'translate') {
+      await handleTranslateCommand(interaction);
+    } else if (interaction.isButton() && interaction.customId.startsWith('send:')) {
+      await handleSendButton(interaction);
+    }
+  } catch (error) {
+    // ここで最終的に受け止めることで、何が起きてもプロセス全体は落とさない
+    console.error('interactionCreateハンドラエラー:', error);
   }
 });
 
