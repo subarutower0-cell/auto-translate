@@ -43,13 +43,29 @@ function decideTargetLang(text) {
   return 'ko';
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // Google翻訳の非公式エンドポイントを利用（APIキー不要・個人利用向け）
-async function translateText(text, targetLang) {
+// User-Agentを付与し、429(レート制限)時は少し待って自動リトライする
+async function translateText(text, targetLang, attempt = 1) {
   const url =
     'https://translate.googleapis.com/translate_a/single' +
     `?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
 
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
+  });
+
+  if (res.status === 429 && attempt < 4) {
+    await sleep(attempt * 1500); // 1.5秒, 3秒, 4.5秒と間隔を空けて再試行
+    return translateText(text, targetLang, attempt + 1);
+  }
+
   if (!res.ok) {
     throw new Error(`翻訳APIエラー: ${res.status}`);
   }
@@ -111,7 +127,12 @@ async function handleTranslateCommand(interaction) {
     await interaction.editReply({ content: previewContent, components: [row] });
   } catch (error) {
     console.error('翻訳エラー:', error);
-    await interaction.editReply('翻訳に失敗しました…もう一度試してみてください。');
+    const isRateLimited = error.message.includes('429');
+    await interaction.editReply(
+      isRateLimited
+        ? '翻訳サービスが混み合っています。少し時間をおいてもう一度試してください。'
+        : '翻訳に失敗しました…もう一度試してみてください。'
+    );
   }
 }
 
