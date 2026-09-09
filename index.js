@@ -1,4 +1,11 @@
-import { Client, GatewayIntentBits, MessageFlags } from 'discord.js';
+import {
+  Client,
+  GatewayIntentBits,
+  MessageFlags,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} from 'discord.js';
 import 'dotenv/config';
 
 const client = new Client({
@@ -6,6 +13,19 @@ const client = new Client({
 });
 
 const MAX_REPLY_LENGTH = 1900; // Discordの2000文字制限に余裕を持たせる
+const PENDING_TTL_MS = 10 * 60 * 1000; // 送信ボタンの有効期限（10分）
+
+// ボタンが押されるまでの間、翻訳結果を一時的に保存しておくメモリ上のキャッシュ
+const pendingTranslations = new Map();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of pendingTranslations) {
+    if (now - value.createdAt > PENDING_TTL_MS) {
+      pendingTranslations.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
 
 // ひらがな・カタカナ・漢字が含まれていれば日本語とみなす簡易判定
 function looksJapanese(text) {
@@ -50,29 +70,82 @@ client.once('ready', () => {
 });
 
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'translate') return;
+  if (interaction.isChatInputCommand() && interaction.commandName === 'translate') {
+    await handleTranslateCommand(interaction);
+  } else if (interaction.isButton() && interaction.customId.startsWith('send:')) {
+    await handleSendButton(interaction);
+  }
+});
 
+async function handleTranslateCommand(interaction) {
   const text = interaction.options.getString('text', true);
   const explicitTarget = interaction.options.getString('to');
 
   const targetLang = explicitTarget ?? decideTargetLang(text);
 
-  // 自分にしか見えない返信にする
+  // 自分にしか見えない返信にする（プレビュー）
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   try {
     const { translated, detectedLang } = await translateText(text, targetLang);
 
-    const reply =
+    const previewContent =
       `**原文** (${detectedLang}): ${truncate(text, MAX_REPLY_LENGTH / 2)}\n` +
       `**翻訳** (${targetLang}): ${truncate(translated, MAX_REPLY_LENGTH / 2)}`;
 
-    await interaction.editReply(reply);
+    const sentMessage = await interaction.editReply(previewContent);
+
+    pendingTranslations.set(sentMessage.id, {
+      text: translated,
+      userId: interaction.user.id,
+      createdAt: Date.now()
+    });
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`send:${sentMessage.id}`)
+        .setLabel('このままチャットに送信')
+        .setStyle(ButtonStyle.Primary)
+    );
+
+    await interaction.editReply({ content: previewContent, components: [row] });
   } catch (error) {
     console.error('翻訳エラー:', error);
     await interaction.editReply('翻訳に失敗しました…もう一度試してみてください。');
   }
-});
+}
+
+async function handleSendButton(interaction) {
+  const msgId = interaction.customId.split(':')[1];
+  const pending = pendingTranslations.get(msgId);
+
+  if (!pending) {
+    await interaction.reply({
+      content: '送信の有効期限が切れました。もう一度 /translate を実行してください。',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (interaction.user.id !== pending.userId) {
+    await interaction.reply({
+      content: 'この操作は翻訳を実行した本人のみ行えます。',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  try {
+    await interaction.channel.send(pending.text);
+    pendingTranslations.delete(msgId);
+    await interaction.update({ content: '✅ チャットに送信しました。', components: [] });
+  } catch (error) {
+    console.error('送信エラー:', error);
+    await interaction.reply({
+      content: '送信に失敗しました。このチャットへの送信権限がない可能性があります。',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+}
 
 client.login(process.env.DISCORD_TOKEN);
