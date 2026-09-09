@@ -5,10 +5,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName('translate')
     .setDescription('文章を自動で翻訳します')
-    // ユーザー自身のアカウントにインストールする「User Install」タイプにする（サーバーへの招待は不要）
-    .setIntegrationTypes(1) // 1 = UserInstall
-    // Botとの個人DM・自分とのDM(Notes)・他の人とのDMで使えるようにする（サーバー内(0)は除外）
-    .setContexts(1, 2) // 1 = BotDM, 2 = PrivateChannel
+    // サーバーへの追加（Guild Install）と、各自のアカウントへの追加（User Install）の両方に対応
+    .setIntegrationTypes(0, 1) // 0 = GuildInstall, 1 = UserInstall
+    // サーバー内・Botとの個人DM・他の人とのDMのすべてで使えるようにする
+    .setContexts(0, 1, 2) // 0 = Guild, 1 = BotDM, 2 = PrivateChannel
     .addStringOption(option =>
       option
         .setName('text')
@@ -18,21 +18,10 @@ const commands = [
     .addStringOption(option =>
       option
         .setName('to')
-        .setDescription('翻訳先の言語（省略時は韓国語。韓国語の入力なら日本語に自動変換）')
+        .setDescription('翻訳先の言語（日本語名・English・한국어・中文などで入力可。省略時は自動）')
         .setRequired(false)
-        .addChoices(
-          { name: '韓国語', value: 'ko' },
-          { name: '日本語', value: 'ja' },
-          { name: '英語', value: 'en' },
-          { name: '中国語（簡体字）', value: 'zh-CN' },
-          { name: '中国語（繁体字）', value: 'zh-TW' },
-          { name: 'タイ語', value: 'th' },
-          { name: 'ベトナム語', value: 'vi' },
-          { name: 'インドネシア語', value: 'id' },
-          { name: 'フランス語', value: 'fr' },
-          { name: 'スペイン語', value: 'es' },
-          { name: 'ドイツ語', value: 'de' }
-        )
+        // 固定リストではなく、入力に合わせて候補を出す方式にする
+        .setAutocomplete(true)
     )
 ].map(command => command.toJSON());
 
