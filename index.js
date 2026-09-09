@@ -13,6 +13,11 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
+// 想定外のエラーでプロセス全体が落ちないようにする（落ちると再起動でデータが消えるため）
+process.on('unhandledRejection', reason => {
+  console.error('Unhandled Rejection:', reason);
+});
+
 const MAX_REPLY_LENGTH = 1900; // Discordの2000文字制限に余裕を持たせる
 const PENDING_TTL_MS = 10 * 60 * 1000; // 送信ボタンの有効期限（10分）
 
@@ -159,11 +164,14 @@ async function handleTranslateCommand(interaction) {
   } catch (error) {
     console.error('翻訳エラー:', error);
     const isRateLimited = error.message.includes('429') || error.message.includes('503');
-    await interaction.editReply(
-      isRateLimited
-        ? '翻訳サービスが混み合っています。少し時間をおいてもう一度試してください。'
-        : '翻訳に失敗しました…もう一度試してみてください。'
-    );
+    const errorMessage = isRateLimited
+      ? '翻訳サービスが混み合っています。少し時間をおいてもう一度試してください。'
+      : '翻訳に失敗しました…もう一度試してみてください。';
+    try {
+      await interaction.editReply(errorMessage);
+    } catch (innerError) {
+      console.error('エラー通知の送信にも失敗:', innerError);
+    }
   }
 }
 
@@ -193,10 +201,16 @@ async function handleSendButton(interaction) {
     pendingTranslations.delete(msgId);
   } catch (error) {
     console.error('送信エラー:', error);
-    await interaction.followUp({
-      content: '送信に失敗しました。もう一度お試しください。',
-      flags: MessageFlags.Ephemeral
-    });
+    try {
+      const errorMessage = { content: '送信に失敗しました。もう一度お試しください。', flags: MessageFlags.Ephemeral };
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage);
+      } else {
+        await interaction.reply(errorMessage);
+      }
+    } catch (innerError) {
+      console.error('エラー通知の送信にも失敗:', innerError);
+    }
   }
 }
 
