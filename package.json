@@ -1,0 +1,17 @@
+{
+  "name": "discord-translate-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "個人用のDiscord自動翻訳ボット（/translateコマンド）",
+  "scripts": {
+    "deploy": "node deploy-commands.js",
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
+  }
+}
