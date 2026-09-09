@@ -188,13 +188,13 @@ async function handleSendButton(interaction) {
   }
 
   try {
-    await interaction.channel.send(pending.text);
-    pendingTranslations.delete(msgId);
     await interaction.update({ content: '✅ チャットに送信しました。', components: [] });
+    await interaction.followUp(pending.text);
+    pendingTranslations.delete(msgId);
   } catch (error) {
     console.error('送信エラー:', error);
-    await interaction.reply({
-      content: '送信に失敗しました。このチャットへの送信権限がない可能性があります。',
+    await interaction.followUp({
+      content: '送信に失敗しました。もう一度お試しください。',
       flags: MessageFlags.Ephemeral
     });
   }
